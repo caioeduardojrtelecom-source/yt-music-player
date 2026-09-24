@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>YT Music Controller — Player</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+    #player { width: 100%; height: 100%; border: 0; display: block; }
+    #error { display: none; color: #fff; font: 14px system-ui, sans-serif; padding: 16px; }
+  </style>
+</head>
+<body>
+  <iframe
+    id="player"
+    title="YouTube Player"
+    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+    referrerpolicy="strict-origin-when-cross-origin"
+    allowfullscreen>
+  </iframe>
+  <div id="error"></div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const frame = document.getElementById('player');
+      const errorBox = document.getElementById('error');
+      const params = new URLSearchParams(location.search);
+      const videoId = params.get('video') || '';
+      const autoplay = params.get('autoplay') === '1';
+      let parentOrigin = '';
+
+      if (!/^[\w-]{6,20}$/.test(videoId)) {
+        frame.style.display = 'none';
+        errorBox.style.display = 'block';
+        errorBox.textContent = 'ID de vídeo inválido.';
+        return;
+      }
+
+      const youtubeUrl = new URL('https://www.youtube.com/embed/' + encodeURIComponent(videoId));
+      youtubeUrl.searchParams.set('enablejsapi', '1');
+      youtubeUrl.searchParams.set('origin', location.origin);
+      youtubeUrl.searchParams.set('autoplay', autoplay ? '1' : '0');
+      youtubeUrl.searchParams.set('playsinline', '1');
+      youtubeUrl.searchParams.set('controls', '1');
+      youtubeUrl.searchParams.set('rel', '0');
+      youtubeUrl.searchParams.set('fs', '1');
+      youtubeUrl.searchParams.set('iv_load_policy', '3');
+      frame.src = youtubeUrl.toString();
+
+      function postToYouTube(message) {
+        if (!frame.contentWindow) return false;
+        try {
+          frame.contentWindow.postMessage(JSON.stringify(message), 'https://www.youtube.com');
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function forward(payload) {
+        if (!parentOrigin || window.parent === window) return;
+        try {
+          window.parent.postMessage({
+            type: 'ytmc-player-event',
+            payload
+          }, parentOrigin);
+        } catch (_) {}
+      }
+
+      function listenToYouTube(attempt = 0) {
+        postToYouTube({
+          event: 'listening',
+          id: 'ytmc-player',
+          channel: 'widget'
+        });
+        if (attempt < 30) setTimeout(() => listenToYouTube(attempt + 1), 250);
+      }
+
+      frame.addEventListener('load', () => listenToYouTube());
+
+      window.addEventListener('message', (event) => {
+        if (event.source === window.parent && event.origin) {
+          parentOrigin = event.origin;
+          const data = event.data || {};
+          if (data.type === 'ytmc-listening') {
+            listenToYouTube();
+            return;
+          }
+          if (data.type === 'ytmc-command' && typeof data.func === 'string') {
+            postToYouTube({
+              event: 'command',
+              func: data.func,
+              args: Array.isArray(data.args) ? data.args : []
+            });
+          }
+          return;
+        }
+
+        if (event.source !== frame.contentWindow) return;
+        if (event.origin !== 'https://www.youtube.com' && event.origin !== 'https://www.youtube-nocookie.com') return;
+
+        let data = event.data;
+        if (typeof data !== 'string') return;
+        try { data = JSON.parse(data); } catch (_) { return; }
+        if (!data || typeof data !== 'object') return;
+        forward(data);
+      });
+    })();
+  </script>
+</body>
+</html>
